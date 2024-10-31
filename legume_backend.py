@@ -215,8 +215,6 @@ def gme_cavity_dot(phc, gaussian_width, eigvec, gmax, kpoints, gme_options):
         
         # Calculate imaginary frequencies that correspond to cavity losses
         f_imag = []
-        # Calculate the directionality of emission
-        direction_ratio = []
         
         if(gaussian_width != 0):
             # Gaussian far-field
@@ -232,8 +230,7 @@ def gme_cavity_dot(phc, gaussian_width, eigvec, gmax, kpoints, gme_options):
             ky_array = npa.array(ky_array)
             rad_coupling_array = npa.array(rad_coupling_array)
                 
-            overlap = calculate_gaussian_overlap(kx_array, ky_array, rad_coupling_array, gaussian_width)
-            direction_ratio.append(overlap)
+            directionality = calculate_gaussian_overlap(kx_array, ky_array, rad_coupling_array, gaussian_width)
                 
         elif(gaussian_width == 0):
             # Directional far-field
@@ -249,12 +246,15 @@ def gme_cavity_dot(phc, gaussian_width, eigvec, gmax, kpoints, gme_options):
             ky_array = npa.array(ky_array)
             rad_coupling_array = npa.array(rad_coupling_array)
                 
-            direction_ratio.append(calculate_directionality(kx_array, ky_array, rad_coupling_array))
-                    
+            directionality = calculate_directionality(kx_array, ky_array, rad_coupling_array)
+        
         else:
             raise ValueError("Gaussian width should be > 0")
         
-        return (gme, npa.array(f_imag), npa.array(direction_ratio), indmode)
+        # Calculate the quality factor:
+        quality_factor =  gme.freqs[0, indmode]/2/npa.mean(f_imag)
+        
+        return (gme, quality_factor, directionality, indmode)
     except:
         raise ValueError(f"Mode not found! max(dot_product) = {np.max(dot_product)}")
     
@@ -345,22 +345,25 @@ def calculate_gaussian_directionality(rad_coup, rad_gvec, gaussian_waist):
     
 def calculate_gaussian_overlap(kx_array, ky_array, rad_coup_array, gaussian_waist):
     
-    k_norm = npa.sqrt(npa.max(kx_array**2 + ky_array**2))
+    k_norm = npa.sqrt(npa.max(kx_array**2 + ky_array**2)) + 0.01
     kx_array = kx_array/k_norm
     ky_array = ky_array/k_norm
     
-    # kx and ky are in sine space: kx = sin(theta)*sin(phi), ky = sin(theta)*cos(phi)
-    sine_theta = npa.sqrt(kx_array**2 + ky_array**2)
+    x = 4*kx_array/npa.sqrt(1 - kx_array**2)
+    y = 4*ky_array/npa.sqrt(1 - ky_array**2)
+    
+    # # kx and ky are in sine space: kx = sin(theta)*sin(phi), ky = sin(theta)*cos(phi)
+    # sine_theta = npa.sqrt(kx_array**2 + ky_array**2)
     
     # define target gaussian array
-    target_gaussian = 1/(2*npa.pi*gaussian_waist**2)*npa.exp(-(kx_array**2 + ky_array**2)/(2*gaussian_waist**2))
-    target_gaussian_norm = target_gaussian/npa.sqrt(npa.sum(target_gaussian**2*sine_theta))
+    target_gaussian = 1/(npa.pi*gaussian_waist**2)*npa.exp(-(x**2 + y**2)/(gaussian_waist**2))
+    target_gaussian_norm = target_gaussian/npa.sqrt(npa.sum(target_gaussian**2))
     
     # Normalise the radiative couplings array
-    rad_norm = npa.sqrt(rad_coup_array)/npa.sqrt(npa.sum(rad_coup_array*sine_theta))
+    rad_norm = npa.sqrt(rad_coup_array)/npa.sqrt(npa.sum(rad_coup_array))
     
-    # Calculate gaussian overlap in spherical coordinates
-    overlap = npa.dot(rad_norm,target_gaussian_norm*sine_theta)**2
+    # Calculate gaussian overlap
+    overlap = npa.dot(rad_norm,target_gaussian_norm)**2
     
     return overlap
 
@@ -568,7 +571,7 @@ class Minimize_Neelesh(object):
         return (self.params, self.of_list, self.param_history, self.t_elapsed_array)
 
     @staticmethod
-    @njit(nopython = True, cache = True)
+    # @njit(nopython = True, cache = True)
     def _step_adam(gradient,
                    mopt_old,
                    vopt_old,
